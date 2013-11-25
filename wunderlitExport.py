@@ -31,37 +31,81 @@ DESCRIPTION = 'Export Wunderlist tasks to CSV or import them to other task manag
 USAGE = 'usage: %prog [options]'
 VERSION = '%prog 0.1.0'
 
+
+class WunderlistReader():
+    def __init__(self, db_path):
+        if not os.path.isfile(db_path):
+            raise RuntimeError('Invalid Wunderlist database path: %s' % db_path)
+
+    def groups():
+        return []
+
+    def tasks(group):
+        return []
+
+    def subtasks(task):
+        return []
+
+
+class Exporter(object):
+    def __init__(self, wunderlist_reader):
+        self.wunderlist_reader = wunderlist_reader
+    
+    def execute(self, args):
+        raise NotImplementedError('Not implemented')
+
+class CsvExporter(Exporter):
+    def __init__(self, wunderlist_reader):
+        super(CsvExporter, self).__init__(wunderlist_reader)
+    
+    def execute(self, args):
+        print 'Execute CSV exporter'
+
+class TwoDoExporter(Exporter):
+    def __init__(self, wunderlist_reader):
+        super(TwoDoExporter, self).__init__(wunderlist_reader)
+    
+    def execute(self, args):
+        print 'Execute 2Do exporter'
+
+
 def die(msg):
-    print >>sys.stderr, '%s: %s' % (sys.argv[0], msg)
+    print >> sys.stderr, '%s: %s' % (sys.argv[0], msg)
     sys.exit(1)
 
-def parseArgs():
-    from optparse import OptionParser
+def parseArgs(exporters, default_exporter):
+    from optparse import OptionParser,TitledHelpFormatter
     
     parser = OptionParser(description=DESCRIPTION, usage=USAGE, version=VERSION)
-    parser.add_option('-w', '--wunderlistdb',
-                      help='path to Wunderlist database')
-    parser.add_option('-e', '--exporter', type='choice', choices=['csv', '2do'],
-                      help='exporter to use')
+
+    parser.set_defaults(wunderlist_db_path=getWunderlistDbPath())
+    parser.add_option('-w', '--wunderlist-db', dest='wunderlist_db_path',
+                      metavar='DB_PATH', help='path to Wunderlist database')
+
+    parser.set_defaults(exporter=default_exporter)
+    parser.add_option('-e', '--exporter', type='choice', choices=exporters,
+                      help='exporter to use (%s)' % (', '.join(exporters)))
     
     (options, args) = parser.parse_args()
 
     return options
 
-def main():
-    # import sqlite3
-    # conn = sqlite3.connect('example.db')
+def getWunderlistDbPath():
+    from itertools import ifilter
 
-    cmd = getCommand()
-    
-    dispatchers = filter(lambda item: item.match(cmd), DISPATCHERS)
-    if len(dispatchers) != 1:
-        die("Command to run was not recognized.")
-        
-    dispatcher = dispatchers.pop()
-    dispatcher.execute(cmd, args)
-    
-    die("Cannot execute dispatcher command.")
+    db_path = '/Library/Application Support/Wunderlist/WKmodel.sqlite'
+    possible_paths = [
+        os.getenv('HOME') + db_path,
+        '%s/Library/Containers/com.wunderkinder.wunderlistdesktop/Data%s' % (os.getenv('HOME'), db_path)
+    ]
+
+    return next(ifilter(lambda path: os.path.isfile(path), possible_paths), None)
 
 if __name__ == '__main__':
-    args = parseArgs()
+    exporters = { 'csv': CsvExporter, '2do': TwoDoExporter }
+    args = parseArgs(exporters.keys(), 'csv')
+
+    wunderlist_reader = WunderlistReader(args.wunderlist_db_path)
+    exporter = exporters[args.exporter](wunderlist_reader)
+    exporter.execute(args)
+    del wunderlist_reader, exporter
