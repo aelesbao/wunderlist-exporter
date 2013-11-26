@@ -44,7 +44,7 @@ class WunderlistReader():
         if not os.path.isfile(db_path):
             raise RuntimeError('Invalid Wunderlist database path: %s' % db_path)
         self.conn = sqlite3.connect(db_path)
-        self.conn.row_factory = self.__dict_factory
+        self.conn.row_factory = sqlite3.Row
 
     def __del__(self):
         self.conn.close()
@@ -60,12 +60,6 @@ class WunderlistReader():
     def subtasks(self, task):
         cursor = self.conn.execute('SELECT * FROM ZRESOURCE WHERE Z_ENT=? AND ZPARENTTASK=? ORDER BY ZORDERINDEXDOUBLE', (self.__ENT_TASK, task['Z_PK']))
         return cursor.fetchall()
-
-    def __dict_factory(self, cursor, row):
-        d = {}
-        for idx, col in enumerate(cursor.description):
-            d[col[0]] = row[idx]
-        return d
 
 
 class Exporter(object):
@@ -117,7 +111,6 @@ class CsvExporter(Exporter):
         def writerows(self, rows):
             for row in rows:
                 self.writerow(row)
-
 
     def __init__(self, reader):
         super(CsvExporter, self).__init__(reader)
