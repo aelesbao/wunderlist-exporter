@@ -169,10 +169,6 @@ class TwoDoExporter(Exporter):
         print 'Executing 2Do exporter...'
 
 
-def die(msg):
-    print >> sys.stderr, '%s: %s' % (sys.argv[0], msg)
-    sys.exit(1)
-
 def parse_args(exporters, default_exporter):
     from optparse import OptionParser,TitledHelpFormatter
     
