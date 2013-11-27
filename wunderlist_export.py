@@ -25,7 +25,7 @@
 
 # Export Wunderlist tasks to CSV or import them to other task managers.
 
-import sys, os, sqlite3
+import sys, os, sqlite3, uuid
 import csv, codecs, cStringIO
 import time
 from datetime import datetime
@@ -153,13 +153,85 @@ class CsvExporter(Exporter):
             writer = CsvExporter.UnicodeWriter(csvfile, delimiter=';', escapechar='\\', doublequote=False, quoting=csv.QUOTE_ALL, strict=True)
             writer.writerows(rows)
 
-
 class TwoDoExporter(Exporter):
+    IMPORT_GROUP_UID = '2DoImportedTasks'
+    IMPORT_GROUP_NAME = 'IMPORTED'
+
+    MAX_TIMESTAMP = 6406192800.0
+
     def __init__(self, reader):
         super(TwoDoExporter, self).__init__(reader)
+        self.conn = None
+        self.cursor = None
     
     def execute(self, args):
         print 'Executing 2Do exporter...'
+        self.__open_db(args.twodo_db_path)
+        self.__import()
+        self.__commit_and_close()
+        print 'Done'
+
+    def __open_db(self, db_path):
+        if not db_path or not os.path.isfile(db_path):
+            raise RuntimeError('Please specify a valid 2Do DB path')
+
+        self.conn = sqlite3.connect(db_path)
+        self.conn.row_factory = sqlite3.Row
+
+        self.cursor = self.conn.cursor()
+
+    def __commit_and_close(self):
+        self.conn.commit()
+        self.conn.close()
+
+    def __import(self):
+        self.__create_import_group()
+        self.__import_tasklists()
+
+    def __create_import_group(self):
+        self.cursor.execute("SELECT primid FROM calgroups WHERE uid=?", (self.IMPORT_GROUP_UID,))
+        if not self.cursor.fetchone():
+            self.cursor.execute("INSERT INTO calgroups (uid, groupname) VALUES (?, ?)", (self.IMPORT_GROUP_UID, self.IMPORT_GROUP_NAME))
+
+    def __import_tasklists(self):
+        tasklists = [dict(dict(tl).items() + dict(UID=str(uuid.uuid4())).items())
+                     for tl in self.reader.tasklists()]
+        self.cursor.executemany("INSERT INTO calendars (title, uid, parentuid, parentname) VALUES (?, ?, ?, ?)",
+                                [(t['ZTITLE'], t['UID'], self.IMPORT_GROUP_UID, self.IMPORT_GROUP_NAME) for t in tasklists])
+        for tl in tasklists: self.__import_tasks(tl)
+
+    def __import_tasks(self, tasklist):
+        tasks = [dict(dict(t).items() + dict(UID=str(uuid.uuid4()),
+                                             CALENDAR_UID=tasklist['UID'],
+                                             SUBTASKS=self.reader.subtasks(t)).items()) for t in self.reader.tasks(tasklist)]
+        self.cursor.executemany("""INSERT INTO tasks (uid, calendaruid, title, creationstamp,
+                                                     iscompleted, completeddate, notes, duedate, tasktype, starred)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                [self.__preare_task_data(t) for t in tasks])
+        for t in tasks: self.__import_subtasks(t)
+
+    def __import_subtasks(self, task):
+        subtasks = [dict(dict(sb).items() + dict(UID=str(uuid.uuid4()),
+                                                 CALENDAR_UID=task['CALENDAR_UID'],
+                                                 PARENT_UID=task['UID']).items()) for sb in task['SUBTASKS']]
+        self.cursor.executemany("""INSERT INTO tasks (uid, calendaruid, title, creationstamp,
+                                                      iscompleted, completeddate, parent, tasktype)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                                [self.__preare_task_data(st) for st in subtasks])
+
+    def __preare_task_data(self, task, issubtask=False):
+        task_data = [task['UID'], task['CALENDAR_UID'], task['ZTITLE'], self.__fix_timestamp(task['ZCREATEDAT'])]
+        task_data += [1 if task['ZCOMPLETER'] else 0, self.__fix_timestamp(task['ZCOMPLETEDAT'])]
+        if not 'PARENT_UID' in task:
+            task_data += [task['ZNOTE'], self.__fix_timestamp(task['ZDUEDATE'])]
+            task_data += [1 if task['SUBTASKS'] else 0, task['ZSTARRED']]
+        else:
+            task_data += [task['PARENT_UID'], 0]
+        return tuple(task_data)
+
+    def __fix_timestamp(self, timestamp):
+        base_date = datetime(2001, 1, 1)
+        return time.mktime(base_date.timetuple()) + timestamp if timestamp else 0;
 
 
 def parse_args(exporters, default_exporter):
@@ -177,6 +249,9 @@ def parse_args(exporters, default_exporter):
 
     parser.set_defaults(filename='wunderlist.csv')
     parser.add_option('-f', '--filename', help='CSV filename to export data')
+
+    parser.add_option('-2', '--2do-db', dest='twodo_db_path',
+                      help='path to 2Do backup database')
     
     (options, args) = parser.parse_args()
 
